@@ -7,22 +7,23 @@ import pandas as pd
 import io
 import re
 
-OCR_API_KEY = "helloworld"  # Free API key from OCR.space
+OCR_API_KEY = "helloworld"  # Free OCR.space key (limit: 10 requests/day)
 
-# OCR function
 def ocr_space_image(image_bytes):
     url_api = "https://api.ocr.space/parse/image"
-    response = requests.post(
-        url_api,
-        files={"filename": image_bytes},
-        data={"apikey": OCR_API_KEY, "language": "eng"},
-    )
-    result = response.json()
-    if result.get("IsErroredOnProcessing", True):
+    try:
+        response = requests.post(
+            url_api,
+            files={"filename": image_bytes},
+            data={"apikey": OCR_API_KEY, "language": "eng"},
+        )
+        result = response.json()
+        if result.get("IsErroredOnProcessing", True):
+            return ""
+        return result["ParsedResults"][0]["ParsedText"]
+    except Exception as e:
         return ""
-    return result["ParsedResults"][0]["ParsedText"]
 
-# Extract info from text
 def extract_info(text):
     email = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
     phone = re.findall(r"\+?\d[\d\s\-]{8,}", text)
@@ -34,7 +35,6 @@ def extract_info(text):
     designation = lines[1] if len(lines) > 1 else ""
     address = ", ".join(lines[2:5]) if len(lines) >= 5 else ""
 
-    # Identify airline
     airline_keywords = [
         "IndiGo", "Air India", "SpiceJet", "GoAir", "Vistara", "Qatar Airways",
         "Emirates", "Etihad", "Turkish Airlines", "Lufthansa", "Singapore Airlines",
@@ -55,10 +55,9 @@ def extract_info(text):
         "Airline": airline
     }
 
-# Streamlit App
 st.set_page_config(page_title="📇 Business Card Reader", layout="centered")
 st.title("📇 Business Card Reader Web App")
-st.markdown("Upload a ZIP file of business card images. The app reads the cards and extracts details to Excel.")
+st.markdown("Upload a ZIP file of business card images (JPG/PNG). This app extracts details and exports them to Excel.")
 
 uploaded_zip = st.file_uploader("📂 Upload ZIP of Business Cards", type=["zip"])
 
@@ -71,7 +70,8 @@ if uploaded_zip:
         zip_ref.extractall(extract_path)
 
     card_data = []
-    st.info("🔍 Processing images...")
+    no_text_files = []
+
     for file in os.listdir(extract_path):
         if file.lower().endswith((".jpg", ".jpeg", ".png")):
             filepath = os.path.join(extract_path, file)
@@ -79,12 +79,13 @@ if uploaded_zip:
                 image_bytes = f.read()
                 text = ocr_space_image(image_bytes)
 
-                if not text:
-                    st.warning(f"❗ No text found in {file}")
+                st.subheader(f"📎 {file}")
+                if not text.strip():
+                    st.error("❌ No text extracted from this image.")
+                    no_text_files.append(file)
                     continue
 
-                st.markdown(f"**📎 File:** `{file}`")
-                st.text_area("📤 OCR Output", text, height=150)
+                st.text_area("📝 Extracted Text", text, height=150)
 
                 details = extract_info(text)
                 details["File Name"] = file
@@ -92,7 +93,7 @@ if uploaded_zip:
 
     if card_data:
         df = pd.DataFrame(card_data)
-        st.subheader("✅ Extracted Card Details")
+        st.success(f"✅ Extracted data from {len(card_data)} cards.")
         st.dataframe(df)
 
         buffer = io.BytesIO()
@@ -100,10 +101,10 @@ if uploaded_zip:
             df.to_excel(writer, index=False, sheet_name='BusinessCards')
 
         st.download_button(
-            label="📥 Download Extracted Excel",
+            label="📥 Download Excel",
             data=buffer.getvalue(),
-            file_name="Extracted_Card_Data.xlsx",
+            file_name="Card_Details.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.warning("⚠️ No valid data found in cards.")
+        st.warning("⚠️ No valid text extracted from uploaded cards. Try different images or clearer scans.")
